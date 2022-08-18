@@ -29,9 +29,6 @@ public:
     Timer& operator =(const Timer& timer);
 
 private:
-    void Repeat();
-
-private:
     int id_;
     bool is_single_shot_ = true;
     std::chrono::milliseconds interval_ = std::chrono::milliseconds(0);
@@ -40,8 +37,6 @@ private:
     std::mutex mutex_;
     // callback
     std::function<void()> timeout_callback_ = nullptr;
-
-    friend class TimerManager;
 };
 
 class TimerManager

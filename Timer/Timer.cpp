@@ -115,11 +115,6 @@ void Timer::SetSingleShot(bool single_shot)
     is_single_shot_ = single_shot;
 }
 
-void Timer::Repeat()
-{
-    next_notify_timepoint_ = std::chrono::steady_clock::now() + interval_;
-}
-
 // TimerManager
 
 TimerManager::TimerManager()
@@ -166,16 +161,10 @@ void TimerManager::Start()
             }
             // todo worker thread or thread pool
             (*ready_timer)()();
-            
+            RemoveTimer(ready_timer->TimerId());
             if (!ready_timer->IsSingleShot())
             {
-                ready_timer->Repeat();
-                // repeat must push again
-                timer_queue_.push(ready_timer);
-            }
-            else
-            {
-                RemoveTimer(ready_timer->TimerId());
+                ready_timer->Start();
             }
         }
 
@@ -210,6 +199,11 @@ void TimerManager::AddTimer(const Timer& timer)
 {
     {
         std::unique_lock<std::mutex> lck(mutex_);
+        if (timer_map_.find(timer.TimerId()) != timer_map_.end())
+        {
+            // shouldn't insert timer
+            return;
+        }
         std::shared_ptr<Timer> new_timer = std::make_shared<Timer>(timer);
         timer_map_.emplace(new_timer->TimerId(), new_timer);
         timer_queue_.push(new_timer);
