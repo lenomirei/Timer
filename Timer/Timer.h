@@ -25,7 +25,7 @@ public:
 
 
     bool operator<(const Timer& timer) const;
-    const std::function<void()>& operator()() const;
+    const std::function<void()>& operator()();
     Timer& operator =(const Timer& timer);
 
 private:
@@ -46,6 +46,7 @@ public:
     static TimerManager* GetInstance();
     static int GenerateTimerID();
     void AddTimer(const Timer& timer);
+    void AddTimer(const std::shared_ptr<Timer>& timer_ptr);
     void Start();
 
 private:

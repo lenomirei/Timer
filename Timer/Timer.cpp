@@ -42,10 +42,13 @@ Timer::~Timer()
 
 void Timer::Start()
 {
-    active_ = true;
-    next_notify_timepoint_ = std::chrono::steady_clock::now() + interval_;
-    // insert to manager
-    TimerManager::GetInstance()->AddTimer((*this));
+    if (!active_)
+    {
+        active_ = true;
+        next_notify_timepoint_ = std::chrono::steady_clock::now() + interval_;
+        // insert to manager
+        TimerManager::GetInstance()->AddTimer((*this));
+    }
 }
 
 void Timer::Stop()
@@ -100,8 +103,16 @@ bool Timer::operator<(const Timer& timer) const
     return this->RemainingTime() < timer.RemainingTime();
 }
 
-const std::function<void()>& Timer::operator()() const
+const std::function<void()>& Timer::operator()()
 {
+    if (!IsSingleShot())
+    {
+        next_notify_timepoint_ = std::chrono::steady_clock::now() + interval_;
+    }
+    else
+    {
+        active_ = false;
+    }
     return timeout_callback_;
 }
 
@@ -150,7 +161,7 @@ void TimerManager::Start()
                 break;
             }
             
-            const std::shared_ptr<Timer>& ready_timer = timer_queue_.top();
+            std::shared_ptr<Timer> ready_timer = timer_queue_.top();
             // must pop, priority can't change object's weight
             timer_queue_.pop();
             lck.unlock();
@@ -164,7 +175,7 @@ void TimerManager::Start()
             RemoveTimer(ready_timer->TimerId());
             if (!ready_timer->IsSingleShot())
             {
-                ready_timer->Start();
+                AddTimer(ready_timer);
             }
         }
 
@@ -212,10 +223,26 @@ void TimerManager::AddTimer(const Timer& timer)
     cond_.notify_one();
 }
 
+void TimerManager::AddTimer(const std::shared_ptr<Timer>& timer_ptr)
+{
+    {
+        std::unique_lock<std::mutex> lck(mutex_);
+        if (timer_map_.find(timer_ptr->TimerId()) != timer_map_.end())
+        {
+            // shouldn't insert timer
+            return;
+        }
+        timer_map_.emplace(timer_ptr->TimerId(), timer_ptr);
+        timer_queue_.push(timer_ptr);
+    }
+
+    cond_.notify_one();
+}
+
 void TimerManager::RemoveTimer(int timer_id)
 {
     std::unique_lock<std::mutex> lck(mutex_);
-    if (timer_map_.find(timer_id) != timer_map_.end())
+    if (timer_map_.find(timer_id) == timer_map_.end())
     {
         // Something wrong maybe happened;
         return;

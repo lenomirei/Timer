@@ -12,7 +12,7 @@ void OnTimeOuut()
 int main()
 {
     Timer timer;
-    timer.SetSingleShot(true);
+    timer.SetSingleShot(false);
     timer.SetInterval(2000);
     //timer.SetTimeoutCallback(std::bind(&OnTimeOuut));
     timer.SetTimeoutCallback([]() {
@@ -21,6 +21,6 @@ int main()
     timer.Start();
 
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+    std::this_thread::sleep_for(std::chrono::milliseconds(8000));
     return 0;
 }
