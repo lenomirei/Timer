@@ -53,6 +53,7 @@ void Timer::Start()
 
 void Timer::Stop()
 {
+    TimerManager::GetInstance()->StopTimer(id_);
     active_ = false;
 }
 
@@ -255,4 +256,14 @@ int TimerManager::GenerateTimerID()
 {
     std::unique_lock<std::mutex> lck(mutex_);
     return g_timer_id_++;
+}
+
+void TimerManager::StopTimer(int timer_id)
+{
+    std::unique_lock<std::mutex> lck(mutex_);
+    auto find_result = timer_map_.find(timer_id);
+    if (find_result != timer_map_.end())
+    {
+        find_result->second->Stop();
+    }
 }

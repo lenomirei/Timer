@@ -47,6 +47,7 @@ public:
     static int GenerateTimerID();
     void AddTimer(const Timer& timer);
     void AddTimer(const std::shared_ptr<Timer>& timer_ptr);
+    void StopTimer(int timer_id);
     void Start();
 
 private:
