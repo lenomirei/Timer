@@ -4,76 +4,91 @@ TimerManager* TimerManager::g_timer_manager = nullptr;
 int TimerManager::g_timer_id_ = 0;
 std::mutex TimerManager::mutex_;
 
-int Timer::TimerId() const
-{
-    return id_;
-}
 
+// Timer
 Timer::Timer()
+    : impl_(std::make_shared<TimerImpl>())
 {
-    id_ = TimerManager::GetInstance()->GenerateTimerID();
-}
-
-Timer::Timer(const Timer& timer)
-{
-    this->id_ = timer.id_;
-    this->is_single_shot_ = timer.is_single_shot_;
-    this->active_ = timer.active_;
-    this->interval_ = timer.interval_;
-    this->next_notify_timepoint_ = timer.next_notify_timepoint_;
-    this->timeout_callback_ = timer.timeout_callback_;
-}
-
-Timer& Timer::operator =(const Timer& timer)
-{
-    this->id_ = timer.id_;
-    this->is_single_shot_ = timer.is_single_shot_;
-    this->active_ = timer.active_;
-    this->interval_ = timer.interval_;
-    this->next_notify_timepoint_ = timer.next_notify_timepoint_;
-    this->timeout_callback_ = timer.timeout_callback_;
-    return *this;
 }
 
 Timer::~Timer()
 {
-    active_ = false;
+    Stop();
 }
 
 void Timer::Start()
 {
-    if (!active_)
+    if (!impl_->IsActive())
     {
-        active_ = true;
-        next_notify_timepoint_ = std::chrono::steady_clock::now() + interval_;
         // insert to manager
-        TimerManager::GetInstance()->AddTimer((*this));
+        impl_->Start();
+        TimerManager::GetInstance()->AddTimer(impl_);
     }
 }
 
 void Timer::Stop()
 {
-    TimerManager::GetInstance()->StopTimer(id_);
+    impl_->Stop();
+}
+
+// TimerImpl
+
+int Timer::TimerImpl::TimerId() const
+{
+    return id_;
+}
+
+Timer::TimerImpl::TimerImpl()
+{
+    id_ = TimerManager::GetInstance()->GenerateTimerID();
+}
+
+Timer::TimerImpl::TimerImpl(const Timer::TimerImpl& timer)
+{
+    this->id_ = timer.id_;
+    this->is_single_shot_ = timer.is_single_shot_;
+    this->active_ = timer.active_;
+    this->interval_ = timer.interval_;
+    this->next_notify_timepoint_ = timer.next_notify_timepoint_;
+    this->timeout_callback_ = timer.timeout_callback_;
+}
+
+Timer::TimerImpl::~TimerImpl()
+{
     active_ = false;
 }
 
-bool Timer::IsActive() const
+void Timer::TimerImpl::Start()
+{
+    if (!active_)
+    {
+        active_ = true;
+        next_notify_timepoint_ = std::chrono::steady_clock::now() + interval_;
+    }
+}
+
+void Timer::TimerImpl::Stop()
+{
+    active_ = false;
+}
+
+bool Timer::TimerImpl::IsActive() const
 {
     // todo active_ need lock£¿
     return active_;
 }
 
-void Timer::SetInterval(int msec)
+void Timer::TimerImpl::SetInterval(int msec)
 {
     interval_ = std::chrono::milliseconds(msec);
 }
 
-int Timer::RemainingTime() const
+int Timer::TimerImpl::RemainingTime() const
 {
     if (IsActive())
     {
         std::chrono::steady_clock::duration duration = next_notify_timepoint_ - std::chrono::steady_clock::now();
-        return duration.count();
+        return std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
     }
     else
     {
@@ -81,7 +96,7 @@ int Timer::RemainingTime() const
     }
 }
 
-std::chrono::milliseconds Timer::RemainingTimeAsDuration() const
+std::chrono::milliseconds Timer::TimerImpl::RemainingTimeAsDuration() const
 {
     if (IsActive())
     {
@@ -94,17 +109,17 @@ std::chrono::milliseconds Timer::RemainingTimeAsDuration() const
     }
 }
 
-void Timer::SetTimeoutCallback(std::function<void()>&& callback)
+void Timer::TimerImpl::SetTimeoutCallback(std::function<void()>&& callback)
 {
     timeout_callback_ = std::move(callback);
 }
 
-bool Timer::operator<(const Timer& timer) const
+bool Timer::TimerImpl::operator<(const Timer::TimerImpl& timer) const
 {
     return this->RemainingTime() < timer.RemainingTime();
 }
 
-const std::function<void()>& Timer::operator()()
+const std::function<void()>& Timer::TimerImpl::operator()()
 {
     if (!IsSingleShot())
     {
@@ -117,12 +132,12 @@ const std::function<void()>& Timer::operator()()
     return timeout_callback_;
 }
 
-bool Timer::IsSingleShot() const
+bool Timer::TimerImpl::IsSingleShot() const
 {
     return is_single_shot_;
 }
 
-void Timer::SetSingleShot(bool single_shot)
+void Timer::TimerImpl::SetSingleShot(bool single_shot)
 {
     is_single_shot_ = single_shot;
 }
@@ -156,13 +171,13 @@ void TimerManager::Start()
         while (!timer_queue_.empty())
         {
             std::unique_lock<std::mutex> lck(mutex_);
-            const std::shared_ptr<Timer>& timer = timer_queue_.top();
+            const std::shared_ptr<Timer::TimerImpl>& timer = timer_queue_.top();
             if (timer->IsActive() && timer->RemainingTime() > 0)
             {
                 break;
             }
             
-            std::shared_ptr<Timer> ready_timer = timer_queue_.top();
+            std::shared_ptr<Timer::TimerImpl> ready_timer = timer_queue_.top();
             // must pop, priority can't change object's weight
             timer_queue_.pop();
             lck.unlock();
@@ -207,7 +222,7 @@ TimerManager* TimerManager::GetInstance()
     return g_timer_manager;
 }
 
-void TimerManager::AddTimer(const Timer& timer)
+void TimerManager::AddTimer(const Timer::TimerImpl& timer)
 {
     {
         std::unique_lock<std::mutex> lck(mutex_);
@@ -216,7 +231,7 @@ void TimerManager::AddTimer(const Timer& timer)
             // shouldn't insert timer
             return;
         }
-        std::shared_ptr<Timer> new_timer = std::make_shared<Timer>(timer);
+        std::shared_ptr<Timer::TimerImpl> new_timer = std::make_shared<Timer::TimerImpl>(timer);
         timer_map_.emplace(new_timer->TimerId(), new_timer);
         timer_queue_.push(new_timer);
     }
@@ -224,7 +239,7 @@ void TimerManager::AddTimer(const Timer& timer)
     cond_.notify_one();
 }
 
-void TimerManager::AddTimer(const std::shared_ptr<Timer>& timer_ptr)
+void TimerManager::AddTimer(const std::shared_ptr<Timer::TimerImpl>& timer_ptr)
 {
     {
         std::unique_lock<std::mutex> lck(mutex_);
@@ -258,12 +273,3 @@ int TimerManager::GenerateTimerID()
     return g_timer_id_++;
 }
 
-void TimerManager::StopTimer(int timer_id)
-{
-    std::unique_lock<std::mutex> lck(mutex_);
-    auto find_result = timer_map_.find(timer_id);
-    if (find_result != timer_map_.end())
-    {
-        find_result->second->Stop();
-    }
-}
