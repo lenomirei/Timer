@@ -187,7 +187,8 @@ void TimerManager::Start()
                 continue;
             }
             // todo worker thread or thread pool
-            (*ready_timer)()();
+            if ((*ready_timer)())
+                (*ready_timer)()();
             RemoveTimer(ready_timer->TimerId());
             if (!ready_timer->IsSingleShot())
             {

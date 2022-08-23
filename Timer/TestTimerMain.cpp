@@ -12,14 +12,16 @@ void OnTimeOuut()
 int main()
 {
     Timer timer;
-    timer.SetSingleShot(true);
+    timer.SetSingleShot(false);
     timer.SetInterval(4000);
-    //timer.SetTimeoutCallback(std::bind(&OnTimeOuut));
-    timer.SetTimeoutCallback([&timer]() {
-        std::cout << "hello" << std::endl;
-        });
+    timer.SetTimeoutCallback(std::bind(&OnTimeOuut));
+    //timer.SetTimeoutCallback(nullptr);
     timer.Start();
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(8000));
+    //std::this_thread::sleep_for(std::chrono::milliseconds(6000));
+
+    int hahaha = timer.RemainingTime();
+    //std::this_thread::sleep_for(std::chrono::milliseconds(6000));
+
     return 0;
 }
