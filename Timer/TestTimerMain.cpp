@@ -17,11 +17,13 @@ int main()
     timer.SetTimeoutCallback(std::bind(&OnTimeOuut));
     //timer.SetTimeoutCallback(nullptr);
     timer.Start();
+    timer.Stop();
+    timer.Start();
 
     //std::this_thread::sleep_for(std::chrono::milliseconds(6000));
 
     int hahaha = timer.RemainingTime();
-    //std::this_thread::sleep_for(std::chrono::milliseconds(6000));
+    std::this_thread::sleep_for(std::chrono::milliseconds(6000));
 
     return 0;
 }

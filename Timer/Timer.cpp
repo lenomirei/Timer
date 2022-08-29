@@ -181,15 +181,14 @@ void TimerManager::Start()
             // must pop, priority can't change object's weight
             timer_queue_.pop();
             lck.unlock();
+            RemoveTimer(ready_timer->TimerId());
             if (!ready_timer->IsActive())
             {
-                RemoveTimer(ready_timer->TimerId());
                 continue;
             }
             // todo worker thread or thread pool
             if ((*ready_timer)())
                 (*ready_timer)()();
-            RemoveTimer(ready_timer->TimerId());
             if (!ready_timer->IsSingleShot())
             {
                 AddTimer(ready_timer);
