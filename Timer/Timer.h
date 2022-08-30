@@ -13,7 +13,7 @@ public:
     ~Timer();
     void Start();
     void Stop();
-    void SetInterval(int msec) { impl_->SetInterval(msec); }
+    void SetInterval(int milsec);
     bool IsActive() const { return impl_->IsActive(); }
     int RemainingTime() const { return impl_->RemainingTime(); }
     bool IsSingleShot() const { return impl_->IsSingleShot(); }
@@ -29,7 +29,7 @@ private:
         ~TimerImpl();
         void Start();
         void Stop();
-        void SetInterval(int msec);
+        void SetInterval(int milsec);
         bool IsActive() const;
         int TimerId() const;
         int RemainingTime() const;
@@ -42,6 +42,15 @@ private:
         bool operator<(const TimerImpl& timer) const;
         const std::function<void()>& operator()();
 
+        class Cmp
+        {
+        public:
+            bool operator()(const std::shared_ptr<TimerImpl>& timer_a, const std::shared_ptr<TimerImpl>& timer_b)
+            {
+                return timer_a->RemainingTime() > timer_b->RemainingTime();
+            }
+        };
+
     private:
         int id_;
         bool is_single_shot_ = true;
@@ -51,6 +60,8 @@ private:
         std::mutex mutex_;
         // callback
         std::function<void()> timeout_callback_ = nullptr;
+        friend class Timer;
+        friend class TimerManager;
     };
 
     std::shared_ptr<TimerImpl> impl_ = nullptr;
@@ -66,11 +77,13 @@ public:
     void AddTimer(const Timer::TimerImpl& timer);
     void AddTimer(const std::shared_ptr<Timer::TimerImpl>& timer_ptr);
     void Start();
+    void Stop();
 
 private:
     TimerManager();
     // called by queue
     void RemoveTimer(int timer_id);
+    void OnStop();
 
     class Destroyer
     {
@@ -89,7 +102,7 @@ private:
     std::unique_ptr<std::thread> timer_thread_;
     std::unique_ptr<std::thread> worker_thread_;
     std::map<int/* timer id */, std::shared_ptr<Timer::TimerImpl>> timer_map_;
-    std::priority_queue<std::shared_ptr<Timer::TimerImpl>> timer_queue_;
+    std::priority_queue<std::shared_ptr<Timer::TimerImpl>, std::vector<std::shared_ptr<Timer::TimerImpl>>, Timer::TimerImpl::Cmp> timer_queue_;
     std::condition_variable cond_;
     bool running_ = false;
 };

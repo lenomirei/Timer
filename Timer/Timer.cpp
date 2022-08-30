@@ -31,6 +31,25 @@ void Timer::Stop()
     impl_->Stop();
 }
 
+void Timer::SetInterval(int milsec)
+{
+    if (!impl_->IsActive())
+    {
+        impl_->SetInterval(milsec);
+    }
+    else
+    {
+        impl_->Stop();
+        std::shared_ptr<TimerImpl> temp = std::make_shared<TimerImpl>();
+        temp->SetInterval(milsec);
+        temp->SetSingleShot(impl_->IsSingleShot());
+        temp->SetTimeoutCallback(std::move(impl_->timeout_callback_));
+        impl_ = temp;
+        impl_->Start();
+        TimerManager::GetInstance()->AddTimer(impl_);
+    }
+}
+
 // TimerImpl
 
 int Timer::TimerImpl::TimerId() const
@@ -78,9 +97,9 @@ bool Timer::TimerImpl::IsActive() const
     return active_;
 }
 
-void Timer::TimerImpl::SetInterval(int msec)
+void Timer::TimerImpl::SetInterval(int milsec)
 {
-    interval_ = std::chrono::milliseconds(msec);
+    interval_ = std::chrono::milliseconds(milsec);
 }
 
 int Timer::TimerImpl::RemainingTime() const
@@ -152,7 +171,7 @@ TimerManager::TimerManager()
 
 TimerManager::~TimerManager()
 {
-    running_ = false;
+    Stop();
     cond_.notify_one();
     if (timer_thread_->joinable())
     {
@@ -168,6 +187,19 @@ void TimerManager::Start()
 {
     while (running_)
     {
+        {
+            // lock to make sure that wait and add will not execute at the same time
+            std::unique_lock<std::mutex> lck(mutex_);
+            if (!timer_queue_.empty())
+            {
+                cond_.wait_for(lck, timer_queue_.top()->RemainingTimeAsDuration());
+            }
+            else
+            {
+                cond_.wait(lck);
+            }
+        }
+
         while (!timer_queue_.empty())
         {
             std::unique_lock<std::mutex> lck(mutex_);
@@ -194,20 +226,22 @@ void TimerManager::Start()
                 AddTimer(ready_timer);
             }
         }
-
-        {
-            // lock to make sure that wait and add will not execute at the same time
-            std::unique_lock<std::mutex> lck(mutex_);
-            if (!timer_queue_.empty())
-            {
-                cond_.wait_for(lck, timer_queue_.top()->RemainingTimeAsDuration());
-            }
-            else
-            {
-                cond_.wait(lck);
-            }
-        }
     }
+}
+
+void TimerManager::Stop()
+{
+    std::shared_ptr<Timer::TimerImpl> stop_timer = std::make_shared<Timer::TimerImpl>();
+    stop_timer->SetSingleShot(true);
+    stop_timer->SetInterval(0);
+    stop_timer->SetTimeoutCallback(std::bind(&TimerManager::OnStop, this));
+    stop_timer->Start();
+    AddTimer(stop_timer);
+}
+
+void TimerManager::OnStop()
+{
+    running_ = false;
 }
 
 TimerManager* TimerManager::GetInstance()
