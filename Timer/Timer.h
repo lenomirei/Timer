@@ -1,7 +1,7 @@
 #pragma once
 #include <thread>
 #include <chrono>
-#include <mutex>
+#include <shared_mutex>
 #include <queue>
 #include <map>
 #include <functional>
@@ -57,7 +57,7 @@ private:
         std::chrono::milliseconds interval_ = std::chrono::milliseconds(0);
         bool active_ = false;
         std::chrono::time_point<std::chrono::steady_clock, std::chrono::steady_clock::duration> next_notify_timepoint_;
-        std::mutex mutex_;
+        mutable std::shared_mutex shared_mutex_;
         // callback
         std::function<void()> timeout_callback_ = nullptr;
         friend class Timer;

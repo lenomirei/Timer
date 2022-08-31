@@ -62,38 +62,27 @@ Timer::TimerImpl::TimerImpl()
     id_ = TimerManager::GetInstance()->GenerateTimerID();
 }
 
-//Timer::TimerImpl::TimerImpl(const Timer::TimerImpl& timer)
-//{
-//    this->id_ = timer.id_;
-//    this->is_single_shot_ = timer.is_single_shot_;
-//    this->active_ = timer.active_;
-//    this->interval_ = timer.interval_;
-//    this->next_notify_timepoint_ = timer.next_notify_timepoint_;
-//    this->timeout_callback_ = timer.timeout_callback_;
-//}
-
 Timer::TimerImpl::~TimerImpl()
 {
-    active_ = false;
+    Stop();
 }
 
 void Timer::TimerImpl::Start()
 {
-    if (!active_)
-    {
-        active_ = true;
-        next_notify_timepoint_ = std::chrono::steady_clock::now() + interval_;
-    }
+    std::unique_lock<std::shared_mutex> writer_lck(shared_mutex_);
+    active_ = true;
+    next_notify_timepoint_ = std::chrono::steady_clock::now() + interval_;
 }
 
 void Timer::TimerImpl::Stop()
 {
+    std::unique_lock<std::shared_mutex> writer_lck(shared_mutex_);
     active_ = false;
 }
 
 bool Timer::TimerImpl::IsActive() const
 {
-    // todo active_ need lock£¿
+    std::shared_lock<std::shared_mutex> reader_lck(shared_mutex_);
     return active_;
 }
 
@@ -106,7 +95,9 @@ int Timer::TimerImpl::RemainingTime() const
 {
     if (IsActive())
     {
+        std::shared_lock<std::shared_mutex> reader_lck(shared_mutex_);
         std::chrono::steady_clock::duration duration = next_notify_timepoint_ - std::chrono::steady_clock::now();
+        reader_lck.unlock();
         return std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
     }
     else
@@ -119,7 +110,9 @@ std::chrono::milliseconds Timer::TimerImpl::RemainingTimeAsDuration() const
 {
     if (IsActive())
     {
+        std::shared_lock<std::shared_mutex> reader_lck(shared_mutex_);
         std::chrono::steady_clock::duration duration = next_notify_timepoint_ - std::chrono::steady_clock::now();
+        reader_lck.unlock();
         return std::chrono::duration_cast<std::chrono::milliseconds>(duration);
     }
     else
@@ -142,11 +135,12 @@ const std::function<void()>& Timer::TimerImpl::operator()()
 {
     if (!IsSingleShot())
     {
+        std::unique_lock<std::shared_mutex> writer_lck(shared_mutex_);
         next_notify_timepoint_ = std::chrono::steady_clock::now() + interval_;
     }
     else
     {
-        active_ = false;
+        Stop();
     }
     return timeout_callback_;
 }
