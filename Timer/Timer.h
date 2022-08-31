@@ -25,7 +25,7 @@ private:
     {
     public:
         TimerImpl();
-        TimerImpl(const TimerImpl& timer);
+        //TimerImpl(const TimerImpl& timer);
         ~TimerImpl();
         void Start();
         void Stop();
@@ -74,7 +74,6 @@ public:
     ~TimerManager();
     static TimerManager* GetInstance();
     static int GenerateTimerID();
-    void AddTimer(const Timer::TimerImpl& timer);
     void AddTimer(const std::shared_ptr<Timer::TimerImpl>& timer_ptr);
     void Start();
     void Stop();

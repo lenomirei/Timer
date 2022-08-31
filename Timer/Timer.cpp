@@ -62,15 +62,15 @@ Timer::TimerImpl::TimerImpl()
     id_ = TimerManager::GetInstance()->GenerateTimerID();
 }
 
-Timer::TimerImpl::TimerImpl(const Timer::TimerImpl& timer)
-{
-    this->id_ = timer.id_;
-    this->is_single_shot_ = timer.is_single_shot_;
-    this->active_ = timer.active_;
-    this->interval_ = timer.interval_;
-    this->next_notify_timepoint_ = timer.next_notify_timepoint_;
-    this->timeout_callback_ = timer.timeout_callback_;
-}
+//Timer::TimerImpl::TimerImpl(const Timer::TimerImpl& timer)
+//{
+//    this->id_ = timer.id_;
+//    this->is_single_shot_ = timer.is_single_shot_;
+//    this->active_ = timer.active_;
+//    this->interval_ = timer.interval_;
+//    this->next_notify_timepoint_ = timer.next_notify_timepoint_;
+//    this->timeout_callback_ = timer.timeout_callback_;
+//}
 
 Timer::TimerImpl::~TimerImpl()
 {
@@ -254,23 +254,6 @@ TimerManager* TimerManager::GetInstance()
     }
 
     return g_timer_manager;
-}
-
-void TimerManager::AddTimer(const Timer::TimerImpl& timer)
-{
-    {
-        std::unique_lock<std::mutex> lck(mutex_);
-        if (timer_map_.find(timer.TimerId()) != timer_map_.end())
-        {
-            // shouldn't insert timer
-            return;
-        }
-        std::shared_ptr<Timer::TimerImpl> new_timer = std::make_shared<Timer::TimerImpl>(timer);
-        timer_map_.emplace(new_timer->TimerId(), new_timer);
-        timer_queue_.push(new_timer);
-    }
-
-    cond_.notify_one();
 }
 
 void TimerManager::AddTimer(const std::shared_ptr<Timer::TimerImpl>& timer_ptr)
