@@ -77,7 +77,17 @@ void Timer::TimerImpl::Start()
 void Timer::TimerImpl::Stop()
 {
     std::unique_lock<std::shared_mutex> writer_lck(shared_mutex_);
+    if (!active_)
+        return;
+
     active_ = false;
+    if (running_ && idle_promise_)
+    {
+        std::future<bool> idle = idle_promise_->get_future();
+        // before wait must unlock or else AfterRun dead lock
+        writer_lck.unlock();
+        idle.wait();
+    }
 }
 
 bool Timer::TimerImpl::IsActive() const
@@ -131,7 +141,7 @@ bool Timer::TimerImpl::operator<(const Timer::TimerImpl& timer) const
     return this->RemainingTime() < timer.RemainingTime();
 }
 
-const std::function<void()>& Timer::TimerImpl::operator()()
+void Timer::TimerImpl::operator()()
 {
     if (!IsSingleShot())
     {
@@ -140,9 +150,16 @@ const std::function<void()>& Timer::TimerImpl::operator()()
     }
     else
     {
-        Stop();
+        std::unique_lock<std::shared_mutex> writer_lck(shared_mutex_);
+        active_ = false;
     }
-    return timeout_callback_;
+
+    if (timeout_callback_)
+    {
+        BeforeRun();
+        timeout_callback_();
+        AfterRun();
+    }
 }
 
 bool Timer::TimerImpl::IsSingleShot() const
@@ -153,6 +170,21 @@ bool Timer::TimerImpl::IsSingleShot() const
 void Timer::TimerImpl::SetSingleShot(bool single_shot)
 {
     is_single_shot_ = single_shot;
+}
+
+void Timer::TimerImpl::BeforeRun()
+{
+    std::unique_lock<std::shared_mutex> writer_lck(shared_mutex_);
+    running_ = true;
+    idle_promise_ = std::make_shared<std::promise<bool>>();
+}
+
+void Timer::TimerImpl::AfterRun()
+{
+    std::unique_lock<std::shared_mutex> writer_lck(shared_mutex_);
+    running_ = false;
+    idle_promise_->set_value(true);
+    idle_promise_ = nullptr;
 }
 
 // TimerManager
@@ -213,8 +245,7 @@ void TimerManager::Start()
                 continue;
             }
             // todo worker thread or thread pool
-            if ((*ready_timer)())
-                (*ready_timer)()();
+            (*ready_timer)();
             if (!ready_timer->IsSingleShot())
             {
                 AddTimer(ready_timer);

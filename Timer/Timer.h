@@ -4,6 +4,7 @@
 #include <shared_mutex>
 #include <queue>
 #include <map>
+#include <future>
 #include <functional>
 
 class Timer
@@ -21,7 +22,7 @@ public:
     void SetTimeoutCallback(std::function<void()>&& callback) { impl_->SetTimeoutCallback(std::move(callback)); }
 
 private:
-    class TimerImpl
+    class TimerImpl : public std::enable_shared_from_this<TimerImpl>
     {
     public:
         TimerImpl();
@@ -30,6 +31,7 @@ private:
         void Start();
         void Stop();
         void SetInterval(int milsec);
+        bool Running() const { return running_; }
         bool IsActive() const;
         int TimerId() const;
         int RemainingTime() const;
@@ -40,7 +42,7 @@ private:
 
 
         bool operator<(const TimerImpl& timer) const;
-        const std::function<void()>& operator()();
+        void operator()();
 
         class Cmp
         {
@@ -50,14 +52,20 @@ private:
                 return timer_a->RemainingTime() > timer_b->RemainingTime();
             }
         };
+    protected:
+        void BeforeRun();
+        void AfterRun();
 
     private:
         int id_;
         bool is_single_shot_ = true;
         std::chrono::milliseconds interval_ = std::chrono::milliseconds(0);
         bool active_ = false;
+        bool running_ = false;
+        std::shared_ptr<std::promise<bool>> idle_promise_ = nullptr;
         std::chrono::time_point<std::chrono::steady_clock, std::chrono::steady_clock::duration> next_notify_timepoint_;
         mutable std::shared_mutex shared_mutex_;
+        mutable std::mutex idle_mutex_;
         // callback
         std::function<void()> timeout_callback_ = nullptr;
         friend class Timer;
