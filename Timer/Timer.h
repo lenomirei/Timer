@@ -13,7 +13,9 @@ public:
     Timer();
     ~Timer();
     void Start();
-    void Stop();
+
+    // do not use synchronous stop in timeout function
+    void Stop(bool sync = false);
     void SetInterval(int milsec);
     bool IsActive() const { return impl_->IsActive(); }
     int RemainingTime() const { return impl_->RemainingTime(); }
@@ -29,7 +31,7 @@ private:
         //TimerImpl(const TimerImpl& timer);
         ~TimerImpl();
         void Start();
-        void Stop();
+        void Stop(bool sync = false);
         void SetInterval(int milsec);
         bool Running() const { return running_; }
         bool IsActive() const;

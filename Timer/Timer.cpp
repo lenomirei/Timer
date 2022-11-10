@@ -26,9 +26,9 @@ void Timer::Start()
     }
 }
 
-void Timer::Stop()
+void Timer::Stop(bool sync)
 {
-    impl_->Stop();
+    impl_->Stop(sync);
 }
 
 void Timer::SetInterval(int milsec)
@@ -74,14 +74,12 @@ void Timer::TimerImpl::Start()
     next_notify_timepoint_ = std::chrono::steady_clock::now() + interval_;
 }
 
-void Timer::TimerImpl::Stop()
+void Timer::TimerImpl::Stop(bool sync)
 {
     std::unique_lock<std::shared_mutex> writer_lck(shared_mutex_);
-    if (!active_)
-        return;
 
     active_ = false;
-    if (running_ && idle_promise_)
+    if (running_ && idle_promise_ && sync)
     {
         std::future<bool> idle = idle_promise_->get_future();
         // before wait must unlock or else AfterRun dead lock
