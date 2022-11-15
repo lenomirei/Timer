@@ -145,6 +145,8 @@ void Timer::TimerImpl::operator()()
     {
         std::unique_lock<std::shared_mutex> writer_lck(shared_mutex_);
         next_notify_timepoint_ = std::chrono::steady_clock::now() + interval_;
+        writer_lck.unlock();
+        TimerManager::GetInstance()->AddTimer(shared_from_this());
     }
     else
     {
@@ -244,10 +246,7 @@ void TimerManager::Start()
             }
             // todo worker thread or thread pool
             (*ready_timer)();
-            if (!ready_timer->IsSingleShot())
-            {
-                AddTimer(ready_timer);
-            }
+            
         }
     }
 }
