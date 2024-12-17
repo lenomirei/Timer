@@ -1,6 +1,5 @@
 #include "Timer.h"
 
-TimerManager* TimerManager::g_timer_manager = nullptr;
 int TimerManager::g_timer_id_ = 0;
 std::mutex TimerManager::mutex_;
 
@@ -268,14 +267,8 @@ void TimerManager::OnStop()
 
 TimerManager* TimerManager::GetInstance()
 {
-    std::unique_lock<std::mutex> lck(mutex_);
-    if (!g_timer_manager)
-    {
-        g_timer_manager = new TimerManager();
-        static Destroyer d;
-    }
-
-    return g_timer_manager;
+    static TimerManager g_timer_manager;
+    return &g_timer_manager;
 }
 
 void TimerManager::AddTimer(const std::shared_ptr<Timer::TimerImpl>& timer_ptr)

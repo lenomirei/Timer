@@ -94,18 +94,7 @@ private:
     void RemoveTimer(int timer_id);
     void OnStop();
 
-    class Destroyer
-    {
-    public:
-        ~Destroyer()
-        {
-            delete g_timer_manager;
-            g_timer_manager = nullptr;
-        }
-    };
-
 private:
-    static TimerManager* g_timer_manager;
     static std::mutex mutex_;
     static int g_timer_id_;
     std::unique_ptr<std::thread> timer_thread_;
