@@ -1,307 +1,220 @@
+/*
+ * @Author: lenomirei lenomirei@163.com
+ * @Date: 2024-12-17 11:52:30
+ * @FilePath: \Timer\Timer.cpp
+ * @Description:
+ *
+ */
 #include "Timer.h"
 
-int TimerManager::g_timer_id_ = 0;
-std::mutex TimerManager::mutex_;
-
-
 // Timer
-Timer::Timer()
-    : impl_(std::make_shared<TimerImpl>())
-{
+Timer::Timer() {
 }
 
-Timer::~Timer()
-{
-    Stop();
+Timer::~Timer() {
+  Stop();
 }
 
-void Timer::Start()
-{
-    if (!impl_->IsActive())
-    {
-        // insert to manager
-        impl_->Start();
-        TimerManager::GetInstance()->AddTimer(impl_);
-    }
+void Timer::Start(int delay_milisec, bool repeat, std::function<void()>&& callback) {
+  user_callback_ = callback;
+  delay_milisec_ = delay_milisec;
+  repeat_ = repeat;
+  StartInternal();
 }
 
-void Timer::Stop(bool sync)
-{
-    impl_->Stop(sync);
+void Timer::OnTimeout() {
+  if (repeat_) {
+    auto user_callback = user_callback_;
+    Reset();
+    user_callback();
+  } else {
+    auto user_callback = std::move(user_callback_);
+    impl_->Stop();
+    std::move(user_callback)();
+  }
 }
 
-void Timer::SetInterval(int milsec)
-{
-    if (!impl_->IsActive())
-    {
-        impl_->SetInterval(milsec);
-    }
-    else
-    {
-        impl_->Stop();
-        std::shared_ptr<TimerImpl> temp = std::make_shared<TimerImpl>();
-        temp->SetInterval(milsec);
-        temp->SetSingleShot(impl_->IsSingleShot());
-        temp->SetTimeoutCallback(std::move(impl_->timeout_callback_));
-        impl_ = temp;
-        impl_->Start();
-        TimerManager::GetInstance()->AddTimer(impl_);
-    }
+void Timer::Stop() {
+  impl_->Stop();
 }
 
-// TimerImpl
-
-int Timer::TimerImpl::TimerId() const
-{
-    return id_;
+void Timer::Reset() {
+  if (impl_) {
+    impl_->Stop();
+    impl_ = nullptr;
+  }
+  impl_ = std::make_shared<Timer::TimerImpl>(std::bind(&Timer::OnTimeout, this));
+  impl_->Start(delay_milisec_);
+  AddImplToManager();
 }
 
-Timer::TimerImpl::TimerImpl()
-{
-    id_ = TimerManager::GetInstance()->GenerateTimerID();
+bool Timer::IsActive() const {
+  if (impl_) {
+    return impl_->IsActive();
+  } else {
+    return false;
+  }
 }
 
-Timer::TimerImpl::~TimerImpl()
-{
-    Stop();
+int64_t Timer::RemainingTime() const {
+  if (impl_) {
+    return impl_->RemainingTime();
+  } else {
+    return -1;
+  }
 }
 
-void Timer::TimerImpl::Start()
-{
-    std::unique_lock<std::shared_mutex> writer_lck(shared_mutex_);
-    active_ = true;
-    next_notify_timepoint_ = std::chrono::steady_clock::now() + interval_;
+void Timer::StartInternal() {
+  Reset();
 }
 
-void Timer::TimerImpl::Stop(bool sync)
-{
-    std::unique_lock<std::shared_mutex> writer_lck(shared_mutex_);
-
-    active_ = false;
-    if (running_ && idle_promise_ && sync)
-    {
-        std::future<bool> idle = idle_promise_->get_future();
-        // before wait must unlock or else AfterRun dead lock
-        writer_lck.unlock();
-        idle.wait();
-    }
+void Timer::AddImplToManager() {
+  // insert to manager
+  TimerManager::GetInstance()->AddTimer(impl_);
 }
 
-bool Timer::TimerImpl::IsActive() const
-{
+//////////////////////////////////////////// TimerImpl
+
+int Timer::TimerImpl::TimerId() const {
+  return id_;
+}
+
+Timer::TimerImpl::TimerImpl(std::function<void()>&& callback)
+    : callback_(std::move(callback)) {
+  id_ = TimerManager::GetInstance()->GenerateTimerID();
+}
+
+Timer::TimerImpl::~TimerImpl() {
+  Stop();
+}
+
+void Timer::TimerImpl::Start(int delay_milisec) {
+  std::unique_lock<std::shared_mutex> writer_lck(shared_mutex_);
+  active_ = true;
+  next_notify_timepoint_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(delay_milisec);
+  writer_lck.unlock();
+}
+
+void Timer::TimerImpl::Stop() {
+  std::unique_lock<std::shared_mutex> writer_lck(shared_mutex_);
+  active_ = false;
+}
+
+bool Timer::TimerImpl::IsActive() const {
+  std::shared_lock<std::shared_mutex> reader_lck(shared_mutex_);
+  return active_;
+}
+
+int64_t Timer::TimerImpl::RemainingTime() const {
+  if (IsActive()) {
     std::shared_lock<std::shared_mutex> reader_lck(shared_mutex_);
-    return active_;
+    std::chrono::steady_clock::duration duration = next_notify_timepoint_ - std::chrono::steady_clock::now();
+    reader_lck.unlock();
+    return std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
+  } else {
+    return -1;
+  }
 }
 
-void Timer::TimerImpl::SetInterval(int milsec)
-{
-    interval_ = std::chrono::milliseconds(milsec);
+std::chrono::milliseconds Timer::TimerImpl::RemainingTimeAsDuration() const {
+  if (IsActive()) {
+    std::shared_lock<std::shared_mutex> reader_lck(shared_mutex_);
+    std::chrono::steady_clock::duration duration = next_notify_timepoint_ - std::chrono::steady_clock::now();
+    reader_lck.unlock();
+    return std::chrono::duration_cast<std::chrono::milliseconds>(duration);
+  } else {
+    return std::chrono::milliseconds(-1);
+  }
 }
 
-int Timer::TimerImpl::RemainingTime() const
-{
-    if (IsActive())
-    {
-        std::shared_lock<std::shared_mutex> reader_lck(shared_mutex_);
-        std::chrono::steady_clock::duration duration = next_notify_timepoint_ - std::chrono::steady_clock::now();
-        reader_lck.unlock();
-        return std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
-    }
-    else
-    {
-        return -1;
-    }
+bool Timer::TimerImpl::operator<(const Timer::TimerImpl& timer) const {
+  return this->RemainingTime() < timer.RemainingTime();
 }
 
-std::chrono::milliseconds Timer::TimerImpl::RemainingTimeAsDuration() const
-{
-    if (IsActive())
-    {
-        std::shared_lock<std::shared_mutex> reader_lck(shared_mutex_);
-        std::chrono::steady_clock::duration duration = next_notify_timepoint_ - std::chrono::steady_clock::now();
-        reader_lck.unlock();
-        return std::chrono::duration_cast<std::chrono::milliseconds>(duration);
-    }
-    else
-    {
-        return std::chrono::milliseconds(-1);
-    }
-}
-
-void Timer::TimerImpl::SetTimeoutCallback(std::function<void()>&& callback)
-{
-    timeout_callback_ = std::move(callback);
-}
-
-bool Timer::TimerImpl::operator<(const Timer::TimerImpl& timer) const
-{
-    return this->RemainingTime() < timer.RemainingTime();
-}
-
-void Timer::TimerImpl::operator()()
-{
-    if (!IsSingleShot())
-    {
-        std::unique_lock<std::shared_mutex> writer_lck(shared_mutex_);
-        next_notify_timepoint_ = std::chrono::steady_clock::now() + interval_;
-        writer_lck.unlock();
-        TimerManager::GetInstance()->AddTimer(shared_from_this());
-    }
-    else
-    {
-        std::unique_lock<std::shared_mutex> writer_lck(shared_mutex_);
-        active_ = false;
-    }
-
-    if (timeout_callback_)
-    {
-        BeforeRun();
-        timeout_callback_();
-        AfterRun();
-    }
-}
-
-bool Timer::TimerImpl::IsSingleShot() const
-{
-    return is_single_shot_;
-}
-
-void Timer::TimerImpl::SetSingleShot(bool single_shot)
-{
-    is_single_shot_ = single_shot;
-}
-
-void Timer::TimerImpl::BeforeRun()
-{
-    std::unique_lock<std::shared_mutex> writer_lck(shared_mutex_);
-    running_ = true;
-    idle_promise_ = std::make_shared<std::promise<bool>>();
-}
-
-void Timer::TimerImpl::AfterRun()
-{
-    std::unique_lock<std::shared_mutex> writer_lck(shared_mutex_);
-    running_ = false;
-    idle_promise_->set_value(true);
-    idle_promise_ = nullptr;
+void Timer::TimerImpl::RunCallback() {
+  {
+    std::lock_guard<std::shared_mutex> reader_lck(shared_mutex_);
+    if (!active_)
+      return;
+  }
+  if (callback_) {
+    callback_();
+  }
 }
 
 // TimerManager
 
 TimerManager::TimerManager()
-{
-    running_ = true;
-    timer_thread_ = std::make_unique<std::thread>(&TimerManager::Start, this);
+    : g_timer_id_(0) {
+  running_ = true;
+  timer_thread_ = std::make_unique<std::thread>(&TimerManager::ThreadLoop, this);
 }
 
-TimerManager::~TimerManager()
-{
-    Stop();
-    cond_.notify_one();
-    if (timer_thread_->joinable())
+TimerManager::~TimerManager() {
+  Stop();
+}
+
+void TimerManager::ThreadLoop() {
+  while (running_) {
     {
-        timer_thread_->join();
-    }
-    //if (worker_thread_->joinable())
-    //{
-    //    worker_thread_->join();
-    //}
-}
-
-void TimerManager::Start()
-{
-    while (running_)
-    {
-        {
-            // lock to make sure that wait and add will not execute at the same time
-            std::unique_lock<std::mutex> lck(mutex_);
-            if (!timer_queue_.empty())
-            {
-                cond_.wait_for(lck, timer_queue_.top()->RemainingTimeAsDuration());
-            }
-            else
-            {
-                cond_.wait(lck);
-            }
-        }
-
-        while (!timer_queue_.empty())
-        {
-            std::unique_lock<std::mutex> lck(mutex_);
-            const std::shared_ptr<Timer::TimerImpl>& timer = timer_queue_.top();
-            if (timer->IsActive() && timer->RemainingTime() > 0)
-            {
-                break;
-            }
-            
-            std::shared_ptr<Timer::TimerImpl> ready_timer = timer_queue_.top();
-            // must pop, priority can't change object's weight
-            timer_queue_.pop();
-            lck.unlock();
-            RemoveTimer(ready_timer->TimerId());
-            if (!ready_timer->IsActive())
-            {
-                continue;
-            }
-            // todo worker thread or thread pool
-            (*ready_timer)();
-            
-        }
-    }
-}
-
-void TimerManager::Stop()
-{
-    std::shared_ptr<Timer::TimerImpl> stop_timer = std::make_shared<Timer::TimerImpl>();
-    stop_timer->SetSingleShot(true);
-    stop_timer->SetInterval(0);
-    stop_timer->SetTimeoutCallback(std::bind(&TimerManager::OnStop, this));
-    stop_timer->Start();
-    AddTimer(stop_timer);
-}
-
-void TimerManager::OnStop()
-{
-    running_ = false;
-}
-
-TimerManager* TimerManager::GetInstance()
-{
-    static TimerManager g_timer_manager;
-    return &g_timer_manager;
-}
-
-void TimerManager::AddTimer(const std::shared_ptr<Timer::TimerImpl>& timer_ptr)
-{
-    {
-        std::unique_lock<std::mutex> lck(mutex_);
-        if (timer_map_.find(timer_ptr->TimerId()) != timer_map_.end())
-        {
-            // shouldn't insert timer
-            return;
-        }
-        timer_map_.emplace(timer_ptr->TimerId(), timer_ptr);
-        timer_queue_.push(timer_ptr);
+      // lock to make sure that wait and add will not execute at the same time
+      std::unique_lock<std::mutex> lock(mutex_);
+      if (!timer_queue_.empty()) {
+        cond_.wait_for(lock, timer_queue_.top()->RemainingTimeAsDuration());
+      } else {
+        cond_.wait(lock);
+      }
     }
 
-    cond_.notify_one();
-}
+    if (!running_)
+      break;
 
-void TimerManager::RemoveTimer(int timer_id)
-{
-    std::unique_lock<std::mutex> lck(mutex_);
-    if (timer_map_.find(timer_id) == timer_map_.end())
-    {
-        // Something wrong maybe happened;
-        return;
+    while (!timer_queue_.empty()) {
+      std::unique_lock<std::mutex> lock(mutex_);
+      const std::shared_ptr<Timer::TimerImpl> const timer = timer_queue_.top();
+      if (timer->IsActive() && timer->RemainingTime() > 0) {
+        break;
+      }
+
+      // must pop, priority can't change object's weight
+      timer_queue_.pop();
+      lock.unlock();
+      if (!timer->IsActive()) {
+        // drop this timer
+        continue;
+      }
+      // todo worker thread or thread pool
+      timer->RunCallback();
     }
-
-    timer_map_.erase(timer_id);
+  }
 }
 
-int TimerManager::GenerateTimerID()
-{
-    std::unique_lock<std::mutex> lck(mutex_);
-    return g_timer_id_++;
+void TimerManager::Stop() {
+  std::unique_lock<std::mutex> lock(mutex_);
+  running_ = false;
+  lock.unlock();
+
+  cond_.notify_one();
+  if (timer_thread_->joinable()) {
+    timer_thread_->join();
+  }
 }
 
+TimerManager* TimerManager::GetInstance() {
+  static TimerManager g_timer_manager;
+  return &g_timer_manager;
+}
+
+void TimerManager::AddTimer(const std::shared_ptr<Timer::TimerImpl>& timer_ptr) {
+  {
+    std::unique_lock<std::mutex> lock(mutex_);
+    timer_queue_.push(timer_ptr);
+  }
+
+  cond_.notify_one();
+}
+
+int TimerManager::GenerateTimerID() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return g_timer_id_++;
+}
