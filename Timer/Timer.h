@@ -1,106 +1,92 @@
 #pragma once
-#include <thread>
 #include <chrono>
-#include <shared_mutex>
-#include <queue>
-#include <map>
-#include <future>
 #include <functional>
+#include <future>
+#include <map>
+#include <queue>
+#include <shared_mutex>
+#include <thread>
 
-class Timer
-{
-public:
-    Timer();
-    ~Timer();
-    void Start();
+class Timer {
+ public:
+  Timer();
+  ~Timer();
+  void Start(int delay_milisec, bool repeat, std::function<void()>&& callback);
 
-    // do not use synchronous stop in timeout function
-    void Stop(bool sync = false);
-    void SetInterval(int milsec);
-    bool IsActive() const { return impl_->IsActive(); }
-    int RemainingTime() const { return impl_->RemainingTime(); }
-    bool IsSingleShot() const { return impl_->IsSingleShot(); }
-    void SetSingleShot(bool single_shot) { impl_->SetSingleShot(single_shot); }
-    void SetTimeoutCallback(std::function<void()>&& callback) { impl_->SetTimeoutCallback(std::move(callback)); }
+  // do not use synchronous stop in timeout function
+  void Stop();
+  bool IsActive() const;
+  int64_t RemainingTime() const;
+  void OnTimeout();
 
-private:
-    class TimerImpl : public std::enable_shared_from_this<TimerImpl>
-    {
-    public:
-        TimerImpl();
-        //TimerImpl(const TimerImpl& timer);
-        ~TimerImpl();
-        void Start();
-        void Stop(bool sync = false);
-        void SetInterval(int milsec);
-        bool Running() const { return running_; }
-        bool IsActive() const;
-        int TimerId() const;
-        int RemainingTime() const;
-        void SetTimeoutCallback(std::function<void()>&& callback);
-        std::chrono::milliseconds RemainingTimeAsDuration() const;
-        bool IsSingleShot() const;
-        void SetSingleShot(bool single_shot);
+ private:
+  class TimerImpl : public std::enable_shared_from_this<TimerImpl> {
+   public:
+    TimerImpl(std::function<void()>&& user_callback);
+    // TimerImpl(const TimerImpl& timer);
+    ~TimerImpl();
+    void Start(int delay_milisec);
+    void Stop();
+    bool Running() const { return running_; }
+    bool IsActive() const;
+    int TimerId() const;
+    int64_t RemainingTime() const;
+    std::chrono::milliseconds RemainingTimeAsDuration() const;
 
+    bool operator<(const TimerImpl& timer) const;
+    void RunCallback();
 
-        bool operator<(const TimerImpl& timer) const;
-        void operator()();
-
-        class Cmp
-        {
-        public:
-            bool operator()(const std::shared_ptr<TimerImpl>& timer_a, const std::shared_ptr<TimerImpl>& timer_b)
-            {
-                return timer_a->RemainingTime() > timer_b->RemainingTime();
-            }
-        };
-    protected:
-        void BeforeRun();
-        void AfterRun();
-
-    private:
-        int id_;
-        bool is_single_shot_ = true;
-        std::chrono::milliseconds interval_ = std::chrono::milliseconds(0);
-        bool active_ = false;
-        bool running_ = false;
-        std::shared_ptr<std::promise<bool>> idle_promise_ = nullptr;
-        std::chrono::time_point<std::chrono::steady_clock, std::chrono::steady_clock::duration> next_notify_timepoint_;
-        mutable std::shared_mutex shared_mutex_;
-        mutable std::mutex idle_mutex_;
-        // callback
-        std::function<void()> timeout_callback_ = nullptr;
-        friend class Timer;
-        friend class TimerManager;
+    class Cmp {
+     public:
+      bool operator()(const std::shared_ptr<TimerImpl>& timer_a, const std::shared_ptr<TimerImpl>& timer_b) {
+        return timer_a->RemainingTime() > timer_b->RemainingTime();
+      }
     };
 
-    std::shared_ptr<TimerImpl> impl_ = nullptr;
+   private:
+    int id_;
+    bool active_ = false;
+    bool running_ = false;
+    std::chrono::time_point<std::chrono::steady_clock, std::chrono::steady_clock::duration> next_notify_timepoint_;
+    mutable std::shared_mutex shared_mutex_;
+    mutable std::mutex idle_mutex_;
+    // wrapper callback
+    std::function<void()> callback_ = nullptr;
+    friend class Timer;
     friend class TimerManager;
+  };
+
+ private:
+  void Reset();
+  void StartInternal();
+  void AddImplToManager();
+
+ private:
+  std::shared_ptr<TimerImpl> impl_ = nullptr;
+  bool repeat_ = false;
+  int delay_milisec_ = 0;
+  std::function<void()> user_callback_ = nullptr;
+  friend class TimerManager;
 };
 
-class TimerManager
-{
-public:
-    ~TimerManager();
-    static TimerManager* GetInstance();
-    static int GenerateTimerID();
-    void AddTimer(const std::shared_ptr<Timer::TimerImpl>& timer_ptr);
-    void Start();
-    void Stop();
+class TimerManager {
+ public:
+  ~TimerManager();
+  static TimerManager* GetInstance();
+  int GenerateTimerID();
+  void AddTimer(const std::shared_ptr<Timer::TimerImpl>& timer_ptr);
+  void Stop();
 
-private:
-    TimerManager();
-    // called by queue
-    void RemoveTimer(int timer_id);
-    void OnStop();
+ private:
+  TimerManager();
+  // called by queue
+  void ThreadLoop();
 
-private:
-    static std::mutex mutex_;
-    static int g_timer_id_;
-    std::unique_ptr<std::thread> timer_thread_;
-    std::unique_ptr<std::thread> worker_thread_;
-    std::map<int/* timer id */, std::shared_ptr<Timer::TimerImpl>> timer_map_;
-    std::priority_queue<std::shared_ptr<Timer::TimerImpl>, std::vector<std::shared_ptr<Timer::TimerImpl>>, Timer::TimerImpl::Cmp> timer_queue_;
-    std::condition_variable cond_;
-    bool running_ = false;
+ private:
+  int g_timer_id_;
+  std::mutex mutex_;
+  std::unique_ptr<std::thread> timer_thread_;
+  std::priority_queue<std::shared_ptr<Timer::TimerImpl>, std::vector<std::shared_ptr<Timer::TimerImpl>>, Timer::TimerImpl::Cmp> timer_queue_;
+  std::condition_variable cond_;
+  bool running_ = false;
 };
